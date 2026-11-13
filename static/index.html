@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MEXC Spread Scanner</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1020;--panel:#141c2e;--line:#27344c;--muted:#91a0b8;--text:#edf3ff;--green:#36d399;--red:#fb7185;--blue:#79aaff}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px Inter,system-ui,Arial,sans-serif}
+main{max-width:1500px;margin:auto;padding:24px}header{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:18px}
+h1{font-size:24px;margin:0 0 5px}.muted{color:var(--muted)}.status{display:flex;align-items:center;gap:8px}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--green);display:inline-block}.dot.bad{background:var(--red)}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:15px;margin-bottom:14px}
+.stats{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr));gap:12px}.stat small{color:var(--muted);display:block;margin-bottom:7px}.stat strong{font-size:23px;font-variant-numeric:tabular-nums}
+.controls{display:flex;gap:12px;align-items:end;flex-wrap:wrap}.field{display:flex;flex-direction:column;gap:6px}.field label{font-size:12px;color:var(--muted)}
+input,select,button{background:#0c1425;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:9px 11px;font:inherit}
+button{cursor:pointer}button:hover{border-color:var(--blue)}.toggle{display:flex;gap:8px;align-items:center;padding:9px 0}
+.tablewrap{overflow:auto}table{border-collapse:collapse;width:100%;min-width:1100px}th,td{text-align:right;padding:11px 9px;border-bottom:1px solid var(--line);white-space:nowrap;font-variant-numeric:tabular-nums}
+th{position:sticky;top:0;background:#182238;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em;z-index:1}
+td:first-child,th:first-child{text-align:left}td:first-child{font-weight:650;color:#dce8ff}
+.spread{color:var(--green);font-weight:750}.negative{color:var(--red)}.depth{font-size:12px}.na{color:#65738b}
+tr:hover td{background:#19243a}.foot{font-size:12px;color:var(--muted);line-height:1.6;margin-top:12px}
+a{color:var(--blue)}.right{margin-left:auto}.smallbtn{font-size:12px;padding:7px 9px}
+@media(max-width:760px){main{padding:13px}.stats{grid-template-columns:repeat(2,1fr)}h1{font-size:20px}}
+</style>
+</head>
+<body><main>
+<header>
+ <div><h1>MEXC Spread Scanner</h1><div class="muted">USDT perpetual futures · публичные рыночные данные</div></div>
+ <div class="status"><span id="dot" class="dot"></span><b id="status">Подключение…</b><span class="muted" id="updated"></span></div>
+</header>
+<section class="stats">
+ <div class="panel stat"><small>Контрактов USDT</small><strong id="total">—</strong></div>
+ <div class="panel stat"><small>Найдено по фильтру</small><strong id="found">—</strong></div>
+ <div class="panel stat"><small>Максимальный спред</small><strong id="maxspread">—</strong></div>
+ <div class="panel stat"><small>Обновление</small><strong>10 сек.</strong></div>
+</section>
+<section class="panel">
+ <div class="controls">
+  <div class="field"><label>Минимальный спред, %</label><input id="minSpread" type="number" min="0" step="0.5" value="5" style="width:130px"></div>
+  <div class="field"><label>Сортировка</label><select id="sort"><option value="spread">Спред: по убыванию</option><option value="volume">Оборот 24ч</option><option value="oi">Open Interest (контракты)</option></select></div>
+  <div class="field"><label>Глубина стакана</label><select id="band"><option value="1">±1%</option><option value="3">±3%</option><option value="5" selected>±5%</option><option value="10">±10%</option></select></div>
+  <label class="toggle"><input type="checkbox" id="alerts"> Уведомлять о новых монетах</label>
+  <button id="notify" class="smallbtn">Разрешить уведомления</button>
+  <button id="refresh" class="smallbtn right">Обновить сейчас</button>
+ </div>
+ <div class="foot">Глубина автоматически загружается для 30 контрактов с самым широким спредом. Значения глубины — оценочный номинал заявок в USDT в пределах выбранного диапазона от средней цены.</div>
+</section>
+<section class="panel">
+ <div class="tablewrap">
+ <table><thead><tr>
+ <th>Контракт</th><th>Спред</th><th>Bid</th><th>Ask</th><th>Last</th><th>Глубина Bid</th><th>Глубина Ask</th><th>Оборот 24ч, USDT</th><th>OI, контракты</th><th>Funding</th>
+ </tr></thead><tbody id="tbody"><tr><td colspan="10" class="muted" style="text-align:center">Ожидаем данные MEXC…</td></tr></tbody></table>
+ </div>
+ <div class="foot" id="depthInfo"></div>
+</section>
+<div class="foot">Источник: публичный Futures API MEXC. Программа только читает рыночные данные и не размещает ордера. Спред считается относительно средней цены: (Ask − Bid) / ((Ask + Bid) / 2) × 100. Пустые/нулевые Bid или Ask исключаются.</div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+let previousAbove=new Set(), firstLoad=true, busy=false;
+const fmt=(n,d=2)=>Number.isFinite(Number(n))?Number(n).toLocaleString('en-US',{maximumFractionDigits:d}):'—';
+const money=n=>Number(n)>0?'$'+fmt(n,0):'—';
+function notify(title,body){
+ if($('alerts').checked && Notification.permission==='granted') new Notification(title,{body});
+}
+async function load(){
+ if(busy)return;busy=true;
+ try{
+  const q=new URLSearchParams({min_spread:$('minSpread').value||'5',sort:$('sort').value});
+  const r=await fetch('/api/scan?'+q.toString(),{cache:'no-store'});
+  if(!r.ok)throw new Error('HTTP '+r.status);
+  const data=await r.json();
+  $('dot').className='dot';$('status').textContent=data.status==='online'?'ONLINE':'Ожидание';
+  $('total').textContent=fmt(data.contracts_total,0);$('found').textContent=fmt(data.count,0);
+  $('maxspread').textContent=data.rows.length?fmt(Math.max(...data.rows.map(x=>x.spread_pct)))+'%':'—';
+  $('updated').textContent=data.updated_at?'Обновлено '+new Date(data.updated_at).toLocaleTimeString():'';
+  $('depthInfo').textContent=`Глубина загружена максимум для ${data.depth_symbol_limit} самых широких спредов. Всего активных контрактов: ${data.contracts_total}.`;
+  const current=new Set(data.rows.map(x=>x.symbol));
+  if(!firstLoad){
+   for(const symbol of current) if(!previousAbove.has(symbol)) notify('Новый широкий спред: '+symbol,'Спред сейчас '+fmt(data.rows.find(x=>x.symbol===symbol).spread_pct)+'%');
+  }
+  previousAbove=current;firstLoad=false;
+  const band=$('band').value;
+  $('tbody').innerHTML=data.rows.map(x=>{
+   const d=x.depth&&x.depth[band];
+   const bidDepth=d?money(d.bids_usdt):'<span class="na">н/д</span>';
+   const askDepth=d?money(d.asks_usdt):'<span class="na">н/д</span>';
+   return `<tr><td>${x.symbol}</td><td class="spread">${fmt(x.spread_pct,2)}%</td><td>${fmt(x.bid,8)}</td><td>${fmt(x.ask,8)}</td><td>${fmt(x.last_price,8)}</td><td class="depth">${bidDepth}</td><td class="depth">${askDepth}</td><td>${money(x.amount24)}</td><td>${fmt(x.open_interest_contracts,0)}</td><td>${fmt(x.funding_rate*100,4)}%</td></tr>`;
+  }).join('')||'<tr><td colspan="10" class="muted" style="text-align:center">Нет контрактов с таким спредом</td></tr>';
+  if(data.error){$('dot').className='dot bad';$('status').textContent='Ошибка API: '+data.error}
+ }catch(e){$('dot').className='dot bad';$('status').textContent='Нет соединения: '+e.message}
+ finally{busy=false}
+}
+$('notify').onclick=async()=>{if(!('Notification'in window)){alert('Браузер не поддерживает уведомления');return}const p=await Notification.requestPermission();alert('Разрешение: '+p)};
+$('refresh').onclick=load;$('minSpread').onchange=load;$('sort').onchange=load;$('band').onchange=load;
+load();setInterval(load,10000);
+</script></body></html>

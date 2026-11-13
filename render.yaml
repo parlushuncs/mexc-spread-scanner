@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: mexc-spread-scanner
+    runtime: docker
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: REFRESH_SECONDS
+        value: "10"
+      - key: DEPTH_SYMBOL_LIMIT
+        value: "30"
+      - key: MIN_SPREAD_DEFAULT
+        value: "5"
