@@ -414,11 +414,22 @@ async def lifespan(app: FastAPI):
 
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         log.warning("Telegram credentials are not configured")
-    else:
+       else:
         log.info(
             "Telegram alerts enabled. Threshold: %.2f%%",
             TELEGRAM_MIN_SPREAD,
         )
+
+        test_ok = await send_telegram(
+            "✅ ТЕСТ MEXC Spread Alert\n"
+            "Telegram подключён успешно!\n"
+            "Порог уведомлений: 50%"
+        )
+
+        if test_ok:
+            log.info("TELEGRAM TEST SUCCESS")
+        else:
+            log.error("TELEGRAM TEST FAILED")
 
     scan_task = asyncio.create_task(scan_loop())
 
